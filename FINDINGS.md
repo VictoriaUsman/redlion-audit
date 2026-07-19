@@ -28,6 +28,8 @@ WHERE c.created_at::timestamptz >= '2026-07-01T00:00:00+00'
 --  match_rate_pct | total_in_period | matched | unmatched
 --  96.0           | 494             | 474     | 20
 ```
+<img width="1496" height="1052" alt="725166C9-706D-4D13-A70B-9F7BDD9ADA9E" src="https://github.com/user-attachments/assets/429b2cfb-623e-4852-b178-9cb70a30a248" />
+
 
 Also saved standalone as `corrected_audit.sql`. Two changes from the original, matching
 Issues 1 and 2 below: `IS NULL` → `IS NOT NULL`, and the join key is normalized with `::bigint`
