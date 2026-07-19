@@ -1,10 +1,15 @@
-# Submission — Weekly Match Audit
+# Weekly Match Audit — Submission
+
+KPI Analyst trial task (Lion Sales Funnel LLC): find why the weekly CRM-vs-warehouse match
+audit reports ~4% against an expected ~96%, quantify the true rate, and correct the query.
+Full task brief: `TASK.md`.
 
 ## Files
 
+- `TASK.md` — original task brief, as provided.
 - `FINDINGS.md` — the written finding: true match rate, root causes in order, evidence for each.
 - `corrected_audit.sql` — the corrected query, returns the true match rate.
-- `weekly_match_audit.sql` — original, unmodified (as provided).
+- `weekly_match_audit.sql` — original audit query, unmodified (as provided).
 - `system_a_crm_export.csv`, `system_b_warehouse.csv` — original data, unmodified.
 
 ## How to load and run
