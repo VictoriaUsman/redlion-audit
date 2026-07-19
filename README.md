@@ -4,9 +4,12 @@ KPI Analyst trial task (Lion Sales Funnel LLC): find why the weekly CRM-vs-wareh
 audit reports ~4% against an expected ~96%, quantify the true rate, and correct the query.
 Full task brief: `TASK.md`.
 
-## File
+## Files
 
-- `FINDINGS.md` — the written finding: corrected sql query, true match rate, root causes in order, evidence for each.
+- `TASK.md` — original task brief, as provided.
+- `FINDINGS.md` — the written finding: corrected SQL query, true match rate, root causes in order, evidence for each.
+- `corrected_audit.sql` — the corrected query as a standalone runnable file, returns the true match rate.
+- `system_a_crm_export.csv`, `system_b_warehouse.csv` — original data, unmodified, needed by the load steps below.
 
 ## How to load and run
 
