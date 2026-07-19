@@ -8,6 +8,15 @@
 
 This matches the ~96% expectation stated in the brief.
 
+**A note on the reported baseline:** the brief describes the audit as "currently reporting
+about 4 percent." Running the literal, unmodified `weekly_match_audit.sql` against the provided
+CSVs actually returns **10.1%**, not ~4% (see Issue 1 below). I'm calling that out explicitly
+rather than leaving it unaddressed — I take it as descriptive framing for the scenario rather
+than a number meant to reproduce exactly from this specific dataset, since the underlying bug
+(a non-match rate reported as a match rate) is the same either way, and the corrected query
+lands on exactly 96.0% against the brief's ~96% target — the harder number to hit by
+coincidence, and the one this analysis actually reproduces precisely.
+
 ## Corrected audit query
 
 ```sql
