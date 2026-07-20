@@ -1,19 +1,29 @@
 # Weekly Match Audit — Submission
 
-KPI Analyst trial task (Lion Sales Funnel LLC): find why the weekly CRM-vs-warehouse match
-audit reports ~4% against an expected ~96%, quantify the true rate, and correct the query.
-Full task brief: `TASK.md`.
+This is my submission for the KPI Analyst trial task for Lion Sales Funnel LLC.
 
-## Files
+**The situation:** every week, a report checks how many customers in the CRM (the sales/contact
+system) also show up in the warehouse (the records system), and prints out what percentage
+matched. That report is supposed to say about 96%, but it's been printing about 4% instead.
 
-- `TASK.md` — original task brief, as provided.
-- `FINDINGS.md` — the written finding: corrected SQL query, true match rate, root causes in order, evidence for each.
-- `corrected_audit.sql` — the corrected query as a standalone runnable file, returns the true match rate.
-- `system_a_crm_export.csv`, `system_b_warehouse.csv` — original data, unmodified, needed by the load steps below.
+**What I found:** the report itself had two bugs in it, and there's also one real, small gap
+in the underlying data. Once the report is fixed, it correctly shows **96%**, matching what
+was expected. The full write-up, in plain language with the evidence for each claim, is in
+`FINDINGS.md`.
 
-## How to load and run
+## What's in this folder
 
-Requires a local PostgreSQL (tested on Postgres 16).
+- `TASK.md` — the original assignment, unchanged.
+- `FINDINGS.md` — my write-up: what the real match rate is, what was wrong and why, with the
+  evidence for each claim.
+- `corrected_audit.sql` — the fixed version of the report, ready to run.
+- `system_a_crm_export.csv`, `system_b_warehouse.csv` — the original data provided for the
+  task, untouched.
+
+## How to check my work
+
+You don't need to take my word for the 96% number — anyone with PostgreSQL installed can load
+the same two data files and run the same fixed report themselves and see the same result.
 
 ```bash
 createdb kpi_trial
@@ -38,12 +48,8 @@ psql -d kpi_trial -c "\copy warehouse FROM 'system_b_warehouse.csv' WITH (FORMAT
 psql -d kpi_trial -f corrected_audit.sql
 ```
 
-Expected output: `match_rate_pct = 96.0`, `total_in_period = 494`, `matched = 474`,
-`unmatched = 20`.
+That should print a match rate of 96.0%, out of 494 customers checked, with 474 matched and
+20 not found.
 
-Note both key columns are loaded as `text`, not `integer`/`bigint`. That's deliberate: it
-preserves the zero-padding in `warehouse.patient_key` exactly as it exists in the source data,
-which is what exposed the format-mismatch issue documented in `FINDINGS.md`. The corrected
-query normalizes with an explicit `::bigint` cast at join time rather than at load time.
-
-See `FINDINGS.md` for the full analysis, evidence, and validation notes.
+See `FINDINGS.md` for the details: what exactly was wrong, how I found each issue, and the
+evidence behind every number above.
