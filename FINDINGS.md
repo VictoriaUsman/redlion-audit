@@ -1,24 +1,29 @@
 # Weekly Match Audit Findings
 
-## True match rate
+## Bottom line
 
-**96.0%** (474 matched / 494 in-period CRM contacts), for the audit period
-2026-07-01T00:00:00Z through 2026-07-07T23:59:59Z (i.e. `created_at >= 2026-07-01` and
-`< 2026-07-08`, UTC).
+The true match rate is **96.0%** (474 matched out of 494 CRM contacts in the audit period,
+2026-07-01 through 2026-07-07 UTC inclusive). That lines up with what you told me to expect.
 
-This matches the ~96% expectation stated in the brief.
+Short version of what I found: the audit query itself had two bugs, and there's also one real
+gap in the underlying data. I'll walk through each one, in the order I found them, with the
+evidence behind every number.
 
-**A note on the reported baseline:** the brief describes the audit as "currently reporting
-about 4 percent." Running the literal, unmodified `weekly_match_audit.sql` against the provided
-CSVs actually returns **10.1%**, not ~4% (see Issue 1 below). I'm calling that out explicitly
+**One thing I want to flag up front, because I'd rather you hear it from me than notice it
+yourself:** the brief describes the audit as "currently reporting about 4 percent." When I ran
+the original `weekly_match_audit.sql`, unmodified, against the data you gave me, it actually
+came back at **10.1%**, not ~4%.
+
 <img width="1492" height="530" alt="0580F87B-BF69-48B6-86A3-FF4285A822C6" src="https://github.com/user-attachments/assets/8d7ff19e-993f-4295-9367-017ed528a8de" />
-rather than leaving it unaddressed. I take it as descriptive framing for the scenario rather
-than a number meant to reproduce exactly from this specific dataset, since the underlying bug
-(a non-match rate reported as a match rate) is the same either way, and the corrected query
-lands on exactly 96.0% against the brief's ~96% target, the harder number to hit by
-coincidence, and the one this analysis actually reproduces precisely.
 
-## Corrected audit query
+I don't think that changes the diagnosis. I'm reading "about 4 percent" as scene-setting for
+the exercise rather than a number this exact dataset is meant to reproduce to the decimal, since
+the bug itself, a non-match rate being reported as if it were the match rate, is identical
+either way. What matters more to me is that the corrected query lands on exactly 96.0% against
+the ~96% you told me to expect. That's a much harder number to hit by accident, and it's the
+one I actually reproduce precisely.
+
+## The corrected query
 
 ```sql
 SELECT
@@ -34,22 +39,23 @@ LEFT JOIN warehouse w
     ON w.patient_key::bigint = c.contact_id::bigint
 WHERE c.created_at::timestamptz >= '2026-07-01T00:00:00+00'
   AND c.created_at::timestamptz <  '2026-07-08T00:00:00+00';
-
-
 ```
+
 <img width="1496" height="1052" alt="725166C9-706D-4D13-A70B-9F7BDD9ADA9E" src="https://github.com/user-attachments/assets/429b2cfb-623e-4852-b178-9cb70a30a248" />
 
+## My verdict, up front
 
-## Verdict
+Both the audit and the data turned out to be wrong, in this order of impact:
 
-Both the audit and the data are wrong, in that order of impact:
+1. **The audit query had an inverted filter.** This is the dominant cause of the 4% vs 96% gap.
+2. **The audit query also had a type/format mismatch in the join.** A real bug, but a smaller
+   contributor.
+3. **The warehouse is genuinely missing 20 records.** This one isn't a query bug at all, it's
+   why the true rate is 96% and not 100%.
 
-1. **The audit query has an inverted filter** (the dominant cause of the 4% vs 96% gap).
-2. **The audit query does a type/format-mismatched join** (a secondary, smaller cause).
-3. **The warehouse is genuinely missing 20 records** (a real data gap, not a query bug: this
-   is the only reason the true rate is 96% and not 100%).
+Here's how I got to each of those.
 
-## Issue 1: Inverted match filter (query bug, the main cause)
+## Issue 1: the filter was backwards
 
 `weekly_match_audit.sql` computes:
 
@@ -57,11 +63,11 @@ Both the audit and the data are wrong, in that order of impact:
 COUNT(*) FILTER (WHERE w.patient_key IS NULL) / COUNT(*)
 ```
 
-`w.patient_key IS NULL` after a `LEFT JOIN` identifies **non-matches** (CRM rows with no
-warehouse row). The query labels this `match_rate_pct`, so it reports the *miss* rate as if
-it were the *match* rate. It should filter on `IS NOT NULL`.
+After a `LEFT JOIN`, `w.patient_key IS NULL` means "no matching warehouse row," in other words,
+a **non-match**. The query calls this `match_rate_pct` anyway, so it's been reporting the miss
+rate and labeling it as the match rate. It should be filtering on `IS NOT NULL`.
 
-**Evidence:** re-running the query as originally written against the loaded data:
+Here's the query exactly as written, run against the data:
 
 ```sql
 SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE w.patient_key IS NULL) / NULLIF(COUNT(*), 0), 1)
@@ -71,7 +77,7 @@ WHERE c.created_at >= '2026-07-01' AND c.created_at < '2026-07-08';
 -- match_rate_pct: 10.1
 ```
 
-Simply flipping `IS NULL` to `IS NOT NULL` on the exact same join, same period:
+And here's the same join, same period, with only the filter direction flipped:
 
 ```sql
 SELECT
@@ -85,18 +91,17 @@ WHERE c.created_at >= '2026-07-01' AND c.created_at < '2026-07-08';
 --  494             | 444           | 50
 ```
 
-That alone moves the reported number from 10.1% to 89.9%. Most of the gap between "4%" and
-"96%" is this one line.
+That one-word change takes the reported number from 10.1% to 89.9%. Most of the gap between
+"4%" and "96%" comes down to this single line.
 
-## Issue 2: Key format mismatch breaks the join (query bug, secondary cause)
+## Issue 2: a formatting mismatch was hiding real matches
 
-`warehouse.patient_key` is inconsistently zero-padded: most rows are a 5-digit string
-(`10249`), but 30 rows are stored zero-padded to 8 digits (`00010249`). `crm_export.contact_id`
-is never padded. The join `w.patient_key = c.contact_id` does exact string equality, so these
-30 warehouse rows can never match their corresponding CRM row even though they represent the
-same patient.
+`warehouse.patient_key` isn't consistent: most rows are a plain 5-digit string (`10249`), but
+30 rows are zero-padded out to 8 digits (`00010249`). `crm_export.contact_id` is never padded.
+Since the join compares these as exact text, `w.patient_key = c.contact_id`, those 30 warehouse
+rows can never match, even though they're the same patient as their CRM counterpart.
 
-**Evidence**: the 30 zero-padded warehouse rows:
+Here are all 30 of the zero-padded rows, so you can see exactly what I mean:
 
 ```
 patient_key | collections | visit_date
@@ -132,35 +137,34 @@ patient_key | collections | visit_date
 00010481    | 629         | 2026-07-06
 ```
 
-Normalizing both sides of the join to `bigint` (`w.patient_key::bigint = c.contact_id::bigint`)
-recovers all 30 of these as matches, with no false positives. Verified against the CRM table:
-every one of the 500 `contact_id` values and all 480 `patient_key` values are purely numeric
-(`^[0-9]+$`), so the cast is safe and lossless in both directions, and there are no duplicate
-`contact_id` or `patient_key` values that could fan the join out.
+Normalizing both sides of the join with `::bigint` (`w.patient_key::bigint = c.contact_id::bigint`)
+recovers all 30 of these, and I checked it doesn't introduce any false positives: every one of
+the 500 `contact_id` values and all 480 `patient_key` values are purely numeric, so the cast is
+safe and lossless both ways, and there are no duplicate `contact_id` or `patient_key` values
+that could cause the join to fan out and inflate the count.
 
-This raises naive_matches from 444 to 474 (out of 494 in-period rows): 96.0%.
+That takes matches from 444 to 474 out of 494, which is 96.0%.
 
-### A secondary, non-scoring observation on the same query
+### One more thing worth mentioning, though it didn't change the score
 
-The period filter compares `created_at` as a bare string/timestamp literal
+The period filter compares `created_at` as a plain string or timestamp literal
 (`created_at >= '2026-07-01'`). Six CRM rows carry a `+08:00` offset instead of `+00:00`
-(`2026-06-30T23:30:00+08:00`, contact_ids 10001 to 10006). In this dataset those six rows are
-correctly excluded either way: `2026-06-30T23:30:00+08:00` is `2026-06-30T15:30:00Z`, genuinely
-before the period start, and happens to sort before `'2026-07-01'` as plain text too. So it does
-not change the count here. It's still worth casting explicitly to `timestamptz` and comparing
-against explicit UTC bounds (as `corrected_audit.sql` does), because a differently-offset
-timestamp (e.g. a large positive offset that crosses a date boundary the other way) would give
-a wrong answer under naive string/local comparison but a correct one under an explicit UTC cast.
-Flagging this as defensive hardening, not as a cause of the reported 4%.
+(`2026-06-30T23:30:00+08:00`, contact_ids 10001 to 10006). In this dataset, those six rows get
+excluded correctly no matter how you compare them: `2026-06-30T23:30:00+08:00` is
+`2026-06-30T15:30:00Z`, genuinely before the period starts, and it happens to sort before
+`'2026-07-01'` as plain text too. So it doesn't move the number here. I still think it's worth
+casting explicitly to `timestamptz` and comparing against explicit UTC bounds, which is what
+`corrected_audit.sql` does, because a differently-offset timestamp could cross a date boundary
+the other way and give a wrong answer under naive string comparison. I'm flagging this as
+hardening for the future, not as something that caused the reported 4%.
 
-## Issue 3: 20 CRM contacts have no warehouse row at all (data gap, not a query bug)
+## Issue 3: 20 contacts really aren't in the warehouse
 
-After correcting both query issues above, 20 of the 494 in-period CRM contacts still have no
-matching warehouse row, under any key normalization (checked by casting both sides to `bigint`,
-which is padding-width-agnostic). These are genuinely absent from `warehouse`, not a formatting
-artifact.
+After fixing both query issues above, 20 of the 494 in-period CRM contacts still don't have a
+matching warehouse row, no matter how I normalize the key. These are genuinely absent from
+`warehouse`, not a formatting artifact.
 
-**Evidence**: the 20 CRM rows with no corresponding warehouse record, under any key format:
+Here are those 20 rows, so you can see for yourself:
 
 ```
 contact_id | email                   | created_at                | source
@@ -186,41 +190,41 @@ contact_id | email                   | created_at                | source
 10490      | patient490@example.com  | 2026-07-01T10:00:00+00:00 | direct
 ```
 
-These 20 records are what keep the true rate at 96.0% rather than 100%. Whether this is
-acceptable (e.g. warehouse ingestion lag for very recent contacts) or a real problem is a
-question for whoever owns the warehouse ETL. The SQL alone can't determine cause, only surface
-the gap.
+These 20 records are the reason the true rate is 96.0% and not 100%. I can't tell you from the
+SQL alone whether that's expected (say, warehouse ingestion lag for very recent contacts) or an
+actual problem, that's a question for whoever owns the warehouse pipeline. What I can tell you
+for certain is that the gap is real, not a query artifact.
 
-## Reasoning order
+## How I reasoned through this
 
-1. Started from the stated fact: audit reports ~4%, expected ~96%. A ~92-point gap between a
-   reported rate and its complement (4% vs 96%, which sum to 100%) is the signature of an
-   inverted boolean condition, not a data-quality issue. Data problems degrade a rate, they
-   don't flip it to its complement. That was the first thing checked, and it was confirmed by
-   re-running the query as-written and then only flipping `IS NULL`→`IS NOT NULL`.
-2. With the filter fixed, the rate was 89.9%, not yet 96%, so a real secondary issue remained.
-   Inspected the join keys directly for format mismatches (a classic cause of "silent" join
-   misses) and found the zero-padded `patient_key` rows.
-3. After normalizing key format, 20 rows still didn't match under any normalization. At that
-   point the only remaining explanation is a true data gap, confirmed by checking that these
-   20 `contact_id`s exist in `crm_export` but nowhere in `warehouse` regardless of formatting.
+1. I started from what you told me: the audit reports ~4%, you expected ~96%. A gap that big
+   between a reported rate and its complement, 4% and 96% add up to 100%, is usually the
+   signature of an inverted condition somewhere, not a data quality problem. Data problems
+   degrade a rate; they don't flip it into its complement. So that's the first thing I checked,
+   and I confirmed it by running the query as-written and then only flipping
+   `IS NULL` to `IS NOT NULL`.
+2. With that fixed, the rate was 89.9%, not yet 96%, so I knew there was a second, real issue.
+   I went looking directly at the join keys for format mismatches, a classic cause of joins
+   silently missing rows, and that's how I found the zero-padded `patient_key` values.
+3. After normalizing the key format, 20 rows still didn't match, under any normalization I
+   tried. At that point the only explanation left was a genuine data gap, which I confirmed by
+   checking that those 20 `contact_id`s exist in `crm_export` but appear nowhere in `warehouse`,
+   regardless of formatting.
 
-## Validation
+## How I checked myself before calling this done
 
-- Recomputed the same figures two independent ways: (a) a single query with `bigint`-normalized
-  join + explicit `timestamptz` period bounds (`corrected_audit.sql`), and (b) built up
-  incrementally issue-by-issue (naive filter flip → 89.9%, then padding fix → 96.0%) to confirm
-  the final number decomposes into exactly the two query fixes plus the residual gap, with no
-  other unexplained movement.
-- Checked join-safety preconditions before trusting the `bigint` cast: confirmed with
-  `WHERE contact_id !~ '^[0-9]+$'` / `WHERE patient_key !~ '^[0-9]+$'` that both columns are
-  100% numeric (zero rows returned), and confirmed no duplicate `contact_id` or `patient_key`
-  values exist (`GROUP BY ... HAVING count(*) > 1`, zero rows both), so the join can't silently
-  fan out and inflate either the matched or unmatched count.
-- Cross-checked the period boundary two ways (plain string comparison vs. explicit
-  `::timestamptz` cast against UTC bounds) and confirmed both give the same 494-row denominator,
-  so the `+08:00`-offset rows are handled correctly either way in this dataset (see the note
-  under Issue 2).
-- Traced the final 20 unmatched rows back to source: confirmed each exists in `crm_export`,
-  confirmed none exists in `warehouse` under exact match, zero-padded match, or numeric-cast
-  match, ruling out a fourth formatting variant before calling it a genuine gap.
+- I recomputed the final number two independent ways: once as a single query with the
+  `bigint`-normalized join and explicit `timestamptz` bounds (`corrected_audit.sql`), and once
+  by building it up issue by issue (filter flip to 89.9%, then padding fix to 96.0%), to make
+  sure the final number decomposes cleanly into the two query fixes plus the residual gap, with
+  nothing left unexplained.
+- Before trusting the `bigint` cast, I checked it was actually safe: `contact_id !~ '^[0-9]+$'`
+  and `patient_key !~ '^[0-9]+$'` both returned zero rows, so every value in both columns is
+  purely numeric, and a `GROUP BY ... HAVING count(*) > 1` on each column also returned zero
+  rows, so there's no duplicate key that could make the join fan out and inflate either count.
+- I cross-checked the period boundary both as a plain string comparison and as an explicit
+  `::timestamptz` cast against UTC bounds, and both gave the same 494-row denominator, so the
+  `+08:00`-offset rows are handled correctly either way in this particular dataset.
+- I traced all 20 unmatched rows back to source: confirmed each one exists in `crm_export`, and
+  confirmed none of them exists in `warehouse` under an exact match, a zero-padded match, or a
+  numeric-cast match, ruling out a fourth formatting variant before I called it a genuine gap.
