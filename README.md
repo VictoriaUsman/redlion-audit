@@ -13,7 +13,6 @@ was expected. The full write-up, in plain language with the evidence for each cl
 
 ## What's in this folder
 
-- `TASK.md` — the original assignment, unchanged.
 - `FINDINGS.md` — my write-up: what the real match rate is, what was wrong and why, with the
   evidence for each claim.
 - `corrected_audit.sql` — the fixed version of the report, ready to run.
